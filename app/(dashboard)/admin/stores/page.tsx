@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Plus, Edit2, Building2, Search, Archive, RotateCcw, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/lib/hooks/useProfile'
@@ -48,6 +48,58 @@ const emptyForm = {
   region_id: '',
   branch_manager_id: '',
   is_active: true,
+}
+
+type BranchFormState = typeof emptyForm
+
+function BranchForm({
+  error, form, setForm, regions, bmProfiles,
+}: {
+  error: string
+  form: BranchFormState
+  setForm: React.Dispatch<React.SetStateAction<BranchFormState>>
+  regions: RegionOption[]
+  bmProfiles: Profile[]
+}) {
+  return (
+    <div className="space-y-4">
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      <Input
+        label="Branch Name"
+        required
+        value={form.name}
+        onChange={e => setForm(f => ({ ...f, name: e.target.value, code: f.code || generateCode(e.target.value) }))}
+        placeholder="e.g. Downtown Branch"
+      />
+      <Input
+        label="Branch Code"
+        required
+        value={form.code}
+        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
+        helperText="Unique identifier. Auto-generated from name."
+      />
+      <Input
+        label="Location / City"
+        value={form.address}
+        onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
+        placeholder="e.g. Johannesburg CBD"
+      />
+      <Select
+        label="Region"
+        options={regions.map(r => ({ value: r.id, label: `${r.name} (${r.code})` }))}
+        placeholder="Select a region…"
+        value={form.region_id}
+        onChange={e => setForm(f => ({ ...f, region_id: e.target.value }))}
+      />
+      <Select
+        label="Branch Manager"
+        options={bmProfiles.map(b => ({ value: b.id, label: `${b.full_name} — ${b.email}` }))}
+        placeholder="Select a Branch Manager…"
+        value={form.branch_manager_id}
+        onChange={e => setForm(f => ({ ...f, branch_manager_id: e.target.value }))}
+      />
+    </div>
+  )
 }
 
 export default function BranchesPage() {
@@ -129,6 +181,25 @@ export default function BranchesPage() {
     return matchSearch && matchRegion && matchStatus
   })
 
+  function triggerScheduleGeneration(orgId: string) {
+    const supabase = createClient()
+    supabase
+      .from('schedules')
+      .select('id')
+      .eq('organisation_id', orgId)
+      .eq('is_active', true)
+      .eq('is_ongoing', true)
+      .then(({ data }) => {
+        ;(data ?? []).forEach(s => {
+          fetch('/api/schedules/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ schedule_id: s.id, days: 90 }),
+          })
+        })
+      })
+  }
+
   async function handleAdd() {
     if (!form.name || !form.code) {
       setError('Branch name and code are required.')
@@ -137,7 +208,7 @@ export default function BranchesPage() {
     setSaving(true)
     setError('')
     const supabase = createClient()
-    const { error: err } = await supabase.from('stores').insert({
+    const { data: newStore, error: err } = await supabase.from('stores').insert({
       organisation_id: adminProfile!.organisation_id,
       name: form.name.trim(),
       code: form.code.trim().toUpperCase(),
@@ -145,8 +216,18 @@ export default function BranchesPage() {
       region_id: form.region_id || null,
       branch_manager_id: form.branch_manager_id || null,
       is_active: form.is_active,
-    })
+    }).select('id').single()
     if (err) { setError(err.message); setSaving(false); return }
+
+    // Sync user_store_assignments so the BM can see their store
+    if (newStore && form.branch_manager_id) {
+      await supabase.from('user_store_assignments').upsert({
+        user_id: form.branch_manager_id,
+        store_id: newStore.id,
+        is_primary: true,
+        assigned_by: adminProfile!.id,
+      }, { onConflict: 'user_id,store_id' })
+    }
 
     await supabase.from('audit_logs').insert({
       organisation_id: adminProfile?.organisation_id,
@@ -160,6 +241,8 @@ export default function BranchesPage() {
     setAddOpen(false)
     setForm(emptyForm)
     setSaving(false)
+    // Trigger expected_submissions generation for all ongoing schedules
+    triggerScheduleGeneration(adminProfile!.organisation_id)
   }
 
   async function handleEdit() {
@@ -179,6 +262,22 @@ export default function BranchesPage() {
       .eq('id', selected.id)
     if (err) { setError(err.message); setSaving(false); return }
 
+    // Sync user_store_assignments — remove old BM assignment if changed, add new one
+    if (selected.branch_manager_id && selected.branch_manager_id !== form.branch_manager_id) {
+      await supabase.from('user_store_assignments')
+        .delete()
+        .eq('user_id', selected.branch_manager_id)
+        .eq('store_id', selected.id)
+    }
+    if (form.branch_manager_id) {
+      await supabase.from('user_store_assignments').upsert({
+        user_id: form.branch_manager_id,
+        store_id: selected.id,
+        is_primary: true,
+        assigned_by: adminProfile!.id,
+      }, { onConflict: 'user_id,store_id' })
+    }
+
     await supabase.from('audit_logs').insert({
       organisation_id: adminProfile?.organisation_id,
       user_id: adminProfile?.id,
@@ -192,6 +291,8 @@ export default function BranchesPage() {
     await fetchBranches()
     setEditOpen(false)
     setSaving(false)
+    // Re-trigger in case region or BM assignment changed
+    triggerScheduleGeneration(adminProfile!.organisation_id)
   }
 
   async function handleToggleActive() {
@@ -237,46 +338,6 @@ export default function BranchesPage() {
     setError('')
     setEditOpen(true)
   }
-
-  const BranchForm = () => (
-    <div className="space-y-4">
-      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-      <Input
-        label="Branch Name"
-        required
-        value={form.name}
-        onChange={e => setForm(f => ({ ...f, name: e.target.value, code: f.code || generateCode(e.target.value) }))}
-        placeholder="e.g. Downtown Branch"
-      />
-      <Input
-        label="Branch Code"
-        required
-        value={form.code}
-        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
-        helperText="Unique identifier. Auto-generated from name."
-      />
-      <Input
-        label="Location / City"
-        value={form.address}
-        onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-        placeholder="e.g. Johannesburg CBD"
-      />
-      <Select
-        label="Region"
-        options={regions.map(r => ({ value: r.id, label: `${r.name} (${r.code})` }))}
-        placeholder="Select a region…"
-        value={form.region_id}
-        onChange={e => setForm(f => ({ ...f, region_id: e.target.value }))}
-      />
-      <Select
-        label="Branch Manager"
-        options={bmProfiles.map(b => ({ value: b.id, label: `${b.full_name} — ${b.email}` }))}
-        placeholder="Select a Branch Manager…"
-        value={form.branch_manager_id}
-        onChange={e => setForm(f => ({ ...f, branch_manager_id: e.target.value }))}
-      />
-    </div>
-  )
 
   if (profileLoading || loading) return <LoadingPage />
 
@@ -406,7 +467,7 @@ export default function BranchesPage() {
       {/* Add Modal */}
       <Modal isOpen={addOpen} onClose={() => setAddOpen(false)} title="Add Branch" size="md">
         <div className="space-y-4">
-          <BranchForm />
+          <BranchForm error={error} form={form} setForm={setForm} regions={regions} bmProfiles={bmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={handleAdd}>
@@ -419,7 +480,7 @@ export default function BranchesPage() {
       {/* Edit Modal */}
       <Modal isOpen={editOpen} onClose={() => setEditOpen(false)} title={`Edit — ${selected?.name}`} size="md">
         <div className="space-y-4">
-          <BranchForm />
+          <BranchForm error={error} form={form} setForm={setForm} regions={regions} bmProfiles={bmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={handleEdit}>Save Changes</Button>

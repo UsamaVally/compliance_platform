@@ -17,8 +17,8 @@ import type { Profile, Region, Store, UserRole } from '@/lib/types'
 
 type ProfileWithDetails = Profile & {
   organisations: { name: string } | null
-  user_store_assignments: { stores: { name: string } | null }[]
-  user_region_assignments: { regions: { name: string } | null }[]
+  user_store_assignments: { store_id: string; stores: { name: string } | null }[]
+  user_region_assignments: { region_id: string; regions: { name: string } | null }[]
 }
 
 const ROLES: UserRole[] = [
@@ -100,8 +100,8 @@ export default function UsersPage() {
       return {
         ...p,
         organisations: { name: adminProfile.organisations?.name ?? '' },
-        user_store_assignments: (storeAssignments ?? []).map((a: any) => ({ stores: a.stores })),
-        user_region_assignments: (regionAssignments ?? []).map((a: any) => ({ regions: a.regions })),
+        user_store_assignments: (storeAssignments ?? []).map((a: any) => ({ store_id: a.store_id, stores: a.stores })),
+        user_region_assignments: (regionAssignments ?? []).map((a: any) => ({ region_id: a.region_id, regions: a.regions })),
       }
     }))
 
@@ -300,8 +300,8 @@ export default function UsersPage() {
 
   function openAssign(user: ProfileWithDetails) {
     setSelectedUser(user)
-    setAssignStoreIds(user.user_store_assignments.map(a => a.stores?.name ?? '').filter(Boolean))
-    setAssignRegionIds(user.user_region_assignments.map(a => a.regions?.name ?? '').filter(Boolean))
+    setAssignStoreIds(user.user_store_assignments.map(a => a.store_id).filter(Boolean))
+    setAssignRegionIds(user.user_region_assignments.map(a => a.region_id).filter(Boolean))
     setAssignOpen(true)
   }
 

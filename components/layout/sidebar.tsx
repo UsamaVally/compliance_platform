@@ -58,10 +58,6 @@ function getNavItems(role: string): NavItem[] {
     case 'general_manager':
       return [
         { label: 'Dashboard', href: '/general-manager', icon: LayoutDashboard },
-        { label: 'Regions', href: '/general-manager/regions', icon: BarChart3 },
-        { label: 'GM Report', href: '/general-manager/gm-report', icon: FileText },
-        { label: 'Escalations', href: '/general-manager/escalations', icon: AlertTriangle },
-        { label: 'Actions', href: '/general-manager/actions', icon: Star },
         { label: 'Notifications', href: '/notifications', icon: Bell },
       ]
     case 'higher_supervision':

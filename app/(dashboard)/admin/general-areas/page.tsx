@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Plus, Edit2, Globe, ChevronRight, Archive, RotateCcw } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/lib/hooks/useProfile'
@@ -42,6 +42,52 @@ const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
   { value: 'inactive', label: 'Inactive' },
 ]
+
+type AreaFormState = typeof emptyForm
+
+function AreaForm({
+  error, form, setForm, gmProfiles,
+}: {
+  error: string
+  form: AreaFormState
+  setForm: React.Dispatch<React.SetStateAction<AreaFormState>>
+  gmProfiles: Profile[]
+}) {
+  return (
+    <div className="space-y-4">
+      {error && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+      )}
+      <Input
+        label="General Area Name"
+        required
+        value={form.name}
+        onChange={e => setForm(f => ({ ...f, name: e.target.value, code: generateCode(e.target.value) }))}
+        placeholder="e.g. Northern Region Area"
+      />
+      <Input
+        label="Area Code"
+        required
+        value={form.code}
+        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
+        helperText="Short unique identifier. Auto-generated from name."
+      />
+      <Select
+        label="Assign General Manager"
+        options={gmProfiles.map(g => ({ value: g.id, label: `${g.full_name} — ${g.email}` }))}
+        placeholder="Select a General Manager…"
+        value={form.general_manager_id}
+        onChange={e => setForm(f => ({ ...f, general_manager_id: e.target.value }))}
+      />
+      <Select
+        label="Status"
+        options={STATUS_OPTIONS}
+        value={form.status}
+        onChange={e => setForm(f => ({ ...f, status: e.target.value as EntityStatus }))}
+      />
+    </div>
+  )
+}
 
 export default function GeneralAreasPage() {
   const { profile: adminProfile, loading: profileLoading } = useProfile()
@@ -277,41 +323,6 @@ export default function GeneralAreasPage() {
 
   if (profileLoading || loading) return <LoadingPage />
 
-  const AreaForm = () => (
-    <div className="space-y-4">
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
-      )}
-      <Input
-        label="General Area Name"
-        required
-        value={form.name}
-        onChange={e => setForm(f => ({ ...f, name: e.target.value, code: generateCode(e.target.value) }))}
-        placeholder="e.g. Northern Region Area"
-      />
-      <Input
-        label="Area Code"
-        required
-        value={form.code}
-        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
-        helperText="Short unique identifier. Auto-generated from name."
-      />
-      <Select
-        label="Assign General Manager"
-        options={gmProfiles.map(g => ({ value: g.id, label: `${g.full_name} — ${g.email}` }))}
-        placeholder="Select a General Manager…"
-        value={form.general_manager_id}
-        onChange={e => setForm(f => ({ ...f, general_manager_id: e.target.value }))}
-      />
-      <Select
-        label="Status"
-        options={STATUS_OPTIONS}
-        value={form.status}
-        onChange={e => setForm(f => ({ ...f, status: e.target.value as EntityStatus }))}
-      />
-    </div>
-  )
-
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -444,7 +455,7 @@ export default function GeneralAreasPage() {
       {/* Add Modal */}
       <Modal isOpen={addOpen} onClose={() => setAddOpen(false)} title="Add General Area" size="md">
         <div className="space-y-4">
-          <AreaForm />
+          <AreaForm error={error} form={form} setForm={setForm} gmProfiles={gmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={handleAdd}>
@@ -462,7 +473,7 @@ export default function GeneralAreasPage() {
         size="md"
       >
         <div className="space-y-4">
-          <AreaForm />
+          <AreaForm error={error} form={form} setForm={setForm} gmProfiles={gmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={handleEdit}>Save Changes</Button>

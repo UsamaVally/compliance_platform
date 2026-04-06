@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { Plus, Edit2, CalendarClock, Pause, Play, Search, Copy, Trash2 } from 'lucide-react'
+import React, { useEffect, useState, useCallback } from 'react'
+import { Plus, Edit2, CalendarClock, Pause, Play, Search, Copy, Trash2, RefreshCw } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/lib/hooks/useProfile'
 import { Button } from '@/components/ui/button'
@@ -69,128 +69,19 @@ const emptyForm = {
   audience_id: '',
 }
 
-export default function SchedulesPage() {
-  const { profile: adminProfile, loading: profileLoading } = useProfile()
+type FormState = typeof emptyForm
 
-  const [schedules, setSchedules] = useState<ScheduleWithDetails[]>([])
-  const [templates, setTemplates] = useState<TemplateOption[]>([])
-  const [branches, setBranches] = useState<EntityOption[]>([])
-  const [regions, setRegions] = useState<EntityOption[]>([])
-  const [generalAreas, setGeneralAreas] = useState<EntityOption[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-
-  const [addOpen, setAddOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
-  const [toggleOpen, setToggleOpen] = useState(false)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-
-  const [selected, setSelected] = useState<ScheduleWithDetails | null>(null)
-  const [form, setForm] = useState(emptyForm)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const fetchSchedules = useCallback(async () => {
-    if (!adminProfile) return
-    const supabase = createClient()
-
-    const { data } = await supabase
-      .from('schedules')
-      .select('*')
-      .eq('organisation_id', adminProfile.organisation_id)
-      .order('created_at', { ascending: false })
-
-    if (!data) { setLoading(false); return }
-
-    // Enrich with template names and audience labels
-    const enriched = await Promise.all(
-      data.map(async (s: ScheduleRow) => {
-        let template_name: string | null = null
-        let audience_label: string | null = null
-
-        if (s.template_id) {
-          const { data: tmpl } = await supabase
-            .from('form_templates')
-            .select('name')
-            .eq('id', s.template_id)
-            .single()
-          template_name = tmpl?.name ?? null
-        }
-
-        if (s.audience_type === 'role') {
-          audience_label = s.applicable_role ? getRoleLabel(s.applicable_role) : 'All Roles'
-        } else if (s.audience_id) {
-          const tableMap: Record<string, string> = {
-            branch: 'stores',
-            region: 'regions',
-            general_area: 'general_areas',
-          }
-          const table = tableMap[s.audience_type ?? '']
-          if (table) {
-            const { data: entity } = await supabase
-              .from(table)
-              .select('name')
-              .eq('id', s.audience_id)
-              .single()
-            audience_label = entity?.name ?? null
-          }
-        }
-
-        return { ...s, template_name, audience_label }
-      })
-    )
-
-    setSchedules(enriched)
-    setLoading(false)
-  }, [adminProfile])
-
-  useEffect(() => {
-    if (!adminProfile) return
-    const supabase = createClient()
-    const orgId = adminProfile.organisation_id
-
-    Promise.all([
-      fetchSchedules(),
-      supabase.from('form_templates').select('id, name').eq('organisation_id', orgId).eq('is_active', true).order('name'),
-      supabase.from('stores').select('id, name').eq('organisation_id', orgId).eq('is_active', true).order('name'),
-      supabase.from('regions').select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name'),
-      supabase.from('general_areas').select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name'),
-    ]).then(([, tmplRes, branchRes, regRes, areaRes]) => {
-      setTemplates(tmplRes.data ?? [])
-      setBranches((branchRes.data ?? []).map(b => ({ id: b.id, label: b.name })))
-      setRegions((regRes.data ?? []).map(r => ({ id: r.id, label: r.name })))
-      setGeneralAreas((areaRes.data ?? []).map(a => ({ id: a.id, label: a.name })))
-    })
-  }, [adminProfile, fetchSchedules])
-
-  // Auto-generate 90 days ahead for ongoing schedules on load
-  useEffect(() => {
-    if (!adminProfile || schedules.length === 0) return
-    const ongoing = schedules.filter(s => s.is_ongoing && s.is_active)
-    ongoing.forEach(s => {
-      fetch('/api/schedules/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ schedule_id: s.id, days: 90 }),
-      })
-    })
-  }, [schedules, adminProfile])
-
-  const filtered = schedules.filter(s => {
-    const matchSearch =
-      !search ||
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      (s.template_name ?? '').toLowerCase().includes(search.toLowerCase())
-    const matchStatus =
-      statusFilter === '' ? true :
-      statusFilter === 'active' ? s.is_active :
-      !s.is_active
-    return matchSearch && matchStatus
-  })
-
+function ScheduleForm({
+  error, form, setForm, templates, branches, regions, generalAreas,
+}: {
+  error: string
+  form: FormState
+  setForm: React.Dispatch<React.SetStateAction<FormState>>
+  templates: TemplateOption[]
+  branches: EntityOption[]
+  regions: EntityOption[]
+  generalAreas: EntityOption[]
+}) {
   function toggleDay(day: number) {
     setForm(f => ({
       ...f,
@@ -200,150 +91,6 @@ export default function SchedulesPage() {
     }))
   }
 
-  function buildPayload() {
-    return {
-      organisation_id: adminProfile!.organisation_id,
-      name: form.name.trim(),
-      form_type: 'branch_check' as const,
-      template_id: form.template_id || null,
-      frequency: form.frequency,
-      days_of_week: form.frequency === 'daily' ? null : form.days_of_week.length > 0 ? form.days_of_week : null,
-      time_due: form.time_due || null,
-      cutoff_time: form.cutoff_time || null,
-      is_ongoing: form.is_ongoing,
-      is_active: true,
-      start_date: form.start_date || null,
-      end_date: form.is_ongoing ? null : (form.end_date || null),
-      audience_type: form.audience_type || null,
-      applicable_role: form.audience_type === 'role' ? (form.applicable_role || null) : null,
-      audience_id: form.audience_type !== 'role' ? (form.audience_id || null) : null,
-    }
-  }
-
-  async function handleSave(isEdit: boolean) {
-    if (!form.name.trim()) {
-      setError('Schedule name is required.')
-      return
-    }
-    if (!form.template_id) {
-      setError('Please select a template.')
-      return
-    }
-    if ((form.frequency === 'weekly' || form.frequency === 'custom') && form.days_of_week.length === 0) {
-      setError('Please select at least one day for weekly/custom schedules.')
-      return
-    }
-    setSaving(true)
-    setError('')
-    const supabase = createClient()
-    const payload = buildPayload()
-
-    if (isEdit && selected) {
-      const { error: err } = await supabase.from('schedules').update(payload).eq('id', selected.id)
-      if (err) { setError(err.message); setSaving(false); return }
-
-      await supabase.from('audit_logs').insert({
-        organisation_id: adminProfile?.organisation_id,
-        user_id: adminProfile?.id,
-        action: 'schedule_updated',
-        entity_type: 'schedules',
-        entity_id: selected.id,
-        old_data: { name: selected.name },
-        new_data: { name: form.name },
-      })
-      setEditOpen(false)
-    } else {
-      const { error: err } = await supabase.from('schedules').insert(payload)
-      if (err) { setError(err.message); setSaving(false); return }
-
-      await supabase.from('audit_logs').insert({
-        organisation_id: adminProfile?.organisation_id,
-        user_id: adminProfile?.id,
-        action: 'schedule_created',
-        entity_type: 'schedules',
-        new_data: { name: form.name },
-      })
-      setAddOpen(false)
-    }
-
-    await fetchSchedules()
-    setForm(emptyForm)
-    setSaving(false)
-  }
-
-  async function handleDelete() {
-    if (!selected) return
-    setDeleting(true)
-    const supabase = createClient()
-    await supabase.from('schedules').delete().eq('id', selected.id)
-    await fetchSchedules()
-    setDeleteOpen(false)
-    setDeleting(false)
-  }
-
-  async function handleToggleActive() {
-    if (!selected) return
-    setSaving(true)
-    const supabase = createClient()
-    await supabase.from('schedules').update({ is_active: !selected.is_active }).eq('id', selected.id)
-
-    await supabase.from('audit_logs').insert({
-      organisation_id: adminProfile?.organisation_id,
-      user_id: adminProfile?.id,
-      action: selected.is_active ? 'schedule_paused' : 'schedule_activated',
-      entity_type: 'schedules',
-      entity_id: selected.id,
-      new_data: { is_active: !selected.is_active },
-    })
-
-    await fetchSchedules()
-    setToggleOpen(false)
-    setSaving(false)
-  }
-
-  async function handleDuplicate(s: ScheduleWithDetails) {
-    const supabase = createClient()
-    const { error: err } = await supabase.from('schedules').insert({
-      organisation_id: s.organisation_id,
-      name: `${s.name} (Copy)`,
-      form_type: s.form_type as any,
-      template_id: s.template_id,
-      frequency: s.frequency as any,
-      days_of_week: s.days_of_week,
-      time_due: s.time_due,
-      cutoff_time: s.cutoff_time,
-      is_ongoing: s.is_ongoing,
-      is_active: false,
-      start_date: s.start_date,
-      end_date: s.end_date,
-      audience_type: s.audience_type as any,
-      applicable_role: s.applicable_role as any,
-      audience_id: s.audience_id,
-    })
-    if (!err) await fetchSchedules()
-  }
-
-  function openEdit(s: ScheduleWithDetails) {
-    setSelected(s)
-    setForm({
-      name: s.name,
-      template_id: s.template_id ?? '',
-      frequency: s.frequency,
-      days_of_week: s.days_of_week ?? [],
-      time_due: s.time_due ?? '',
-      cutoff_time: s.cutoff_time ?? '',
-      start_date: s.start_date ?? '',
-      end_date: s.end_date ?? '',
-      is_ongoing: s.is_ongoing,
-      audience_type: s.audience_type ?? 'role',
-      applicable_role: s.applicable_role ?? 'branch_manager',
-      audience_id: s.audience_id ?? '',
-    })
-    setError('')
-    setEditOpen(true)
-  }
-
-  // Audience options based on selected type
   function audienceOptions(): { value: string; label: string }[] {
     if (form.audience_type === 'branch') return branches.map(b => ({ value: b.id, label: b.label }))
     if (form.audience_type === 'region') return regions.map(r => ({ value: r.id, label: r.label }))
@@ -351,7 +98,7 @@ export default function SchedulesPage() {
     return []
   }
 
-  const ScheduleForm = () => (
+  return (
     <div className="space-y-5">
       {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
@@ -516,11 +263,312 @@ export default function SchedulesPage() {
       )}
     </div>
   )
+}
+
+export default function SchedulesPage() {
+  const { profile: adminProfile, loading: profileLoading } = useProfile()
+
+  const [schedules, setSchedules] = useState<ScheduleWithDetails[]>([])
+  const [templates, setTemplates] = useState<TemplateOption[]>([])
+  const [branches, setBranches] = useState<EntityOption[]>([])
+  const [regions, setRegions] = useState<EntityOption[]>([])
+  const [generalAreas, setGeneralAreas] = useState<EntityOption[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [toggleOpen, setToggleOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const [selected, setSelected] = useState<ScheduleWithDetails | null>(null)
+  const [form, setForm] = useState(emptyForm)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [generating, setGenerating] = useState<Record<string, boolean>>({})
+  const [generateResult, setGenerateResult] = useState<{ id: string; msg: string; ok: boolean } | null>(null)
+
+  const fetchSchedules = useCallback(async () => {
+    if (!adminProfile) return
+    const supabase = createClient()
+
+    const { data } = await supabase
+      .from('schedules')
+      .select('*')
+      .eq('organisation_id', adminProfile.organisation_id)
+      .order('created_at', { ascending: false })
+
+    if (!data) { setLoading(false); return }
+
+    // Enrich with template names and audience labels
+    const enriched = await Promise.all(
+      data.map(async (s: ScheduleRow) => {
+        let template_name: string | null = null
+        let audience_label: string | null = null
+
+        if (s.template_id) {
+          const { data: tmpl } = await supabase
+            .from('form_templates')
+            .select('name')
+            .eq('id', s.template_id)
+            .single()
+          template_name = tmpl?.name ?? null
+        }
+
+        if (s.audience_type === 'role') {
+          audience_label = s.applicable_role ? getRoleLabel(s.applicable_role) : 'All Roles'
+        } else if (s.audience_id) {
+          const tableMap: Record<string, string> = {
+            branch: 'stores',
+            region: 'regions',
+            general_area: 'general_areas',
+          }
+          const table = tableMap[s.audience_type ?? '']
+          if (table) {
+            const { data: entity } = await supabase
+              .from(table)
+              .select('name')
+              .eq('id', s.audience_id)
+              .single()
+            audience_label = entity?.name ?? null
+          }
+        }
+
+        return { ...s, template_name, audience_label }
+      })
+    )
+
+    setSchedules(enriched)
+    setLoading(false)
+  }, [adminProfile])
+
+  useEffect(() => {
+    if (!adminProfile) return
+    const supabase = createClient()
+    const orgId = adminProfile.organisation_id
+
+    Promise.all([
+      fetchSchedules(),
+      supabase.from('form_templates').select('id, name').eq('organisation_id', orgId).eq('is_active', true).order('name'),
+      supabase.from('stores').select('id, name').eq('organisation_id', orgId).eq('is_active', true).order('name'),
+      supabase.from('regions').select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name'),
+      supabase.from('general_areas').select('id, name').eq('organisation_id', orgId).eq('status', 'active').order('name'),
+    ]).then(([, tmplRes, branchRes, regRes, areaRes]) => {
+      setTemplates(tmplRes.data ?? [])
+      setBranches((branchRes.data ?? []).map(b => ({ id: b.id, label: b.name })))
+      setRegions((regRes.data ?? []).map(r => ({ id: r.id, label: r.name })))
+      setGeneralAreas((areaRes.data ?? []).map(a => ({ id: a.id, label: a.name })))
+    })
+  }, [adminProfile, fetchSchedules])
+
+  // Auto-generate 90 days ahead for ongoing schedules on load
+  useEffect(() => {
+    if (!adminProfile || schedules.length === 0) return
+    const ongoing = schedules.filter(s => s.is_ongoing && s.is_active)
+    ongoing.forEach(s => {
+      fetch('/api/schedules/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule_id: s.id, days: 90 }),
+      })
+    })
+  }, [schedules, adminProfile])
+
+  const filtered = schedules.filter(s => {
+    const matchSearch =
+      !search ||
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      (s.template_name ?? '').toLowerCase().includes(search.toLowerCase())
+    const matchStatus =
+      statusFilter === '' ? true :
+      statusFilter === 'active' ? s.is_active :
+      !s.is_active
+    return matchSearch && matchStatus
+  })
+
+
+  function buildPayload() {
+    return {
+      organisation_id: adminProfile!.organisation_id,
+      name: form.name.trim(),
+      form_type: 'branch_check' as const,
+      template_id: form.template_id || null,
+      frequency: form.frequency,
+      days_of_week: form.frequency === 'daily' ? null : form.days_of_week.length > 0 ? form.days_of_week : null,
+      time_due: form.time_due || null,
+      cutoff_time: form.cutoff_time || null,
+      is_ongoing: form.is_ongoing,
+      is_active: true,
+      start_date: form.start_date || null,
+      end_date: form.is_ongoing ? null : (form.end_date || null),
+      audience_type: form.audience_type || null,
+      applicable_role: form.audience_type === 'role' ? (form.applicable_role || null) : null,
+      audience_id: form.audience_type !== 'role' ? (form.audience_id || null) : null,
+    }
+  }
+
+  async function handleSave(isEdit: boolean) {
+    if (!form.name.trim()) {
+      setError('Schedule name is required.')
+      return
+    }
+    if (!form.template_id) {
+      setError('Please select a template.')
+      return
+    }
+    if ((form.frequency === 'weekly' || form.frequency === 'custom') && form.days_of_week.length === 0) {
+      setError('Please select at least one day for weekly/custom schedules.')
+      return
+    }
+    setSaving(true)
+    setError('')
+    const supabase = createClient()
+    const payload = buildPayload()
+
+    if (isEdit && selected) {
+      const { error: err } = await supabase.from('schedules').update(payload).eq('id', selected.id)
+      if (err) { setError(err.message); setSaving(false); return }
+
+      await supabase.from('audit_logs').insert({
+        organisation_id: adminProfile?.organisation_id,
+        user_id: adminProfile?.id,
+        action: 'schedule_updated',
+        entity_type: 'schedules',
+        entity_id: selected.id,
+        old_data: { name: selected.name },
+        new_data: { name: form.name },
+      })
+      setEditOpen(false)
+    } else {
+      const { error: err } = await supabase.from('schedules').insert(payload)
+      if (err) { setError(err.message); setSaving(false); return }
+
+      await supabase.from('audit_logs').insert({
+        organisation_id: adminProfile?.organisation_id,
+        user_id: adminProfile?.id,
+        action: 'schedule_created',
+        entity_type: 'schedules',
+        new_data: { name: form.name },
+      })
+      setAddOpen(false)
+    }
+
+    await fetchSchedules()
+    setForm(emptyForm)
+    setSaving(false)
+  }
+
+  async function handleDelete() {
+    if (!selected) return
+    setDeleting(true)
+    const supabase = createClient()
+    await supabase.from('schedules').delete().eq('id', selected.id)
+    await fetchSchedules()
+    setDeleteOpen(false)
+    setDeleting(false)
+  }
+
+  async function handleToggleActive() {
+    if (!selected) return
+    setSaving(true)
+    const supabase = createClient()
+    await supabase.from('schedules').update({ is_active: !selected.is_active }).eq('id', selected.id)
+
+    await supabase.from('audit_logs').insert({
+      organisation_id: adminProfile?.organisation_id,
+      user_id: adminProfile?.id,
+      action: selected.is_active ? 'schedule_paused' : 'schedule_activated',
+      entity_type: 'schedules',
+      entity_id: selected.id,
+      new_data: { is_active: !selected.is_active },
+    })
+
+    await fetchSchedules()
+    setToggleOpen(false)
+    setSaving(false)
+  }
+
+  async function handleDuplicate(s: ScheduleWithDetails) {
+    const supabase = createClient()
+    const { error: err } = await supabase.from('schedules').insert({
+      organisation_id: s.organisation_id,
+      name: `${s.name} (Copy)`,
+      form_type: s.form_type as any,
+      template_id: s.template_id,
+      frequency: s.frequency as any,
+      days_of_week: s.days_of_week,
+      time_due: s.time_due,
+      cutoff_time: s.cutoff_time,
+      is_ongoing: s.is_ongoing,
+      is_active: false,
+      start_date: s.start_date,
+      end_date: s.end_date,
+      audience_type: s.audience_type as any,
+      applicable_role: s.applicable_role as any,
+      audience_id: s.audience_id,
+    })
+    if (!err) await fetchSchedules()
+  }
+
+  function openEdit(s: ScheduleWithDetails) {
+    setSelected(s)
+    setForm({
+      name: s.name,
+      template_id: s.template_id ?? '',
+      frequency: s.frequency,
+      days_of_week: s.days_of_week ?? [],
+      time_due: s.time_due ?? '',
+      cutoff_time: s.cutoff_time ?? '',
+      start_date: s.start_date ?? '',
+      end_date: s.end_date ?? '',
+      is_ongoing: s.is_ongoing,
+      audience_type: s.audience_type ?? 'role',
+      applicable_role: s.applicable_role ?? 'branch_manager',
+      audience_id: s.audience_id ?? '',
+    })
+    setError('')
+    setEditOpen(true)
+  }
+
+
+  async function handleGenerate(scheduleId: string) {
+    setGenerating(g => ({ ...g, [scheduleId]: true }))
+    setGenerateResult(null)
+    try {
+      const res = await fetch('/api/schedules/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule_id: scheduleId, days: 90 }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setGenerateResult({ id: scheduleId, ok: false, msg: json.error ?? 'Generation failed' })
+      } else {
+        const count = json.data?.generated ?? 0
+        setGenerateResult({ id: scheduleId, ok: true, msg: count === 0 ? 'Already up to date' : `Generated ${count} entries` })
+      }
+    } catch {
+      setGenerateResult({ id: scheduleId, ok: false, msg: 'Network error' })
+    }
+    setGenerating(g => ({ ...g, [scheduleId]: false }))
+    setTimeout(() => setGenerateResult(null), 5000)
+  }
 
   if (profileLoading || loading) return <LoadingPage />
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Generate result toast */}
+      {generateResult && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium transition-all ${generateResult.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+          <RefreshCw className={`h-4 w-4 flex-shrink-0 ${generateResult.ok ? 'text-green-600' : 'text-red-500'}`} />
+          {generateResult.msg}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -634,6 +682,15 @@ export default function SchedulesPage() {
                           </Button>
                           <Button
                             size="sm"
+                            variant="outline"
+                            onClick={() => handleGenerate(s.id)}
+                            loading={generating[s.id]}
+                            title="Generate expected submissions now"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" /> Generate
+                          </Button>
+                          <Button
+                            size="sm"
                             variant={s.is_active ? 'outline' : 'secondary'}
                             onClick={() => { setSelected(s); setToggleOpen(true) }}
                             title={s.is_active ? 'Pause' : 'Activate'}
@@ -660,7 +717,7 @@ export default function SchedulesPage() {
       {/* Add Modal */}
       <Modal isOpen={addOpen} onClose={() => setAddOpen(false)} title="New Schedule" size="lg">
         <div className="space-y-4">
-          <ScheduleForm />
+          <ScheduleForm error={error} form={form} setForm={setForm} templates={templates} branches={branches} regions={regions} generalAreas={generalAreas} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={() => handleSave(false)}>
@@ -673,7 +730,7 @@ export default function SchedulesPage() {
       {/* Edit Modal */}
       <Modal isOpen={editOpen} onClose={() => setEditOpen(false)} title={`Edit — ${selected?.name}`} size="lg">
         <div className="space-y-4">
-          <ScheduleForm />
+          <ScheduleForm error={error} form={form} setForm={setForm} templates={templates} branches={branches} regions={regions} generalAreas={generalAreas} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={() => handleSave(true)}>Save Changes</Button>

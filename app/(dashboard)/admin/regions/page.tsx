@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { Plus, Edit2, MapPin, ChevronRight, Archive, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useProfile } from '@/lib/hooks/useProfile'
@@ -39,6 +39,62 @@ const emptyForm = {
   general_area_id: '',
   regional_manager_id: '',
   status: 'active' as EntityStatus,
+}
+
+type RegionFormState = typeof emptyForm
+
+function RegionForm({
+  error, form, setForm, generalAreas, rmProfiles,
+}: {
+  error: string
+  form: RegionFormState
+  setForm: React.Dispatch<React.SetStateAction<RegionFormState>>
+  generalAreas: GeneralArea[]
+  rmProfiles: Profile[]
+}) {
+  return (
+    <div className="space-y-4">
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+      <Input
+        label="Region Name"
+        required
+        value={form.name}
+        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+        placeholder="e.g. North Region"
+      />
+      <Input
+        label="Region Code"
+        required
+        value={form.code}
+        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
+        placeholder="e.g. NR"
+        helperText="Short unique identifier"
+      />
+      <Select
+        label="General Area"
+        options={generalAreas.map(a => ({ value: a.id, label: a.name }))}
+        placeholder="Select a General Area…"
+        value={form.general_area_id}
+        onChange={e => setForm(f => ({ ...f, general_area_id: e.target.value }))}
+      />
+      <Select
+        label="Regional Manager"
+        options={rmProfiles.map(r => ({ value: r.id, label: `${r.full_name} — ${r.email}` }))}
+        placeholder="Select a Regional Manager…"
+        value={form.regional_manager_id}
+        onChange={e => setForm(f => ({ ...f, regional_manager_id: e.target.value }))}
+      />
+      <Select
+        label="Status"
+        options={[
+          { value: 'active', label: 'Active' },
+          { value: 'inactive', label: 'Inactive' },
+        ]}
+        value={form.status}
+        onChange={e => setForm(f => ({ ...f, status: e.target.value as EntityStatus }))}
+      />
+    </div>
+  )
 }
 
 export default function RegionsPage() {
@@ -234,50 +290,6 @@ export default function RegionsPage() {
     return <Badge variant="default">Archived</Badge>
   }
 
-  const RegionForm = () => (
-    <div className="space-y-4">
-      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
-      <Input
-        label="Region Name"
-        required
-        value={form.name}
-        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-        placeholder="e.g. North Region"
-      />
-      <Input
-        label="Region Code"
-        required
-        value={form.code}
-        onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
-        placeholder="e.g. NR"
-        helperText="Short unique identifier"
-      />
-      <Select
-        label="General Area"
-        options={generalAreas.map(a => ({ value: a.id, label: a.name }))}
-        placeholder="Select a General Area…"
-        value={form.general_area_id}
-        onChange={e => setForm(f => ({ ...f, general_area_id: e.target.value }))}
-      />
-      <Select
-        label="Regional Manager"
-        options={rmProfiles.map(r => ({ value: r.id, label: `${r.full_name} — ${r.email}` }))}
-        placeholder="Select a Regional Manager…"
-        value={form.regional_manager_id}
-        onChange={e => setForm(f => ({ ...f, regional_manager_id: e.target.value }))}
-      />
-      <Select
-        label="Status"
-        options={[
-          { value: 'active', label: 'Active' },
-          { value: 'inactive', label: 'Inactive' },
-        ]}
-        value={form.status}
-        onChange={e => setForm(f => ({ ...f, status: e.target.value as EntityStatus }))}
-      />
-    </div>
-  )
-
   if (profileLoading || loading) return <LoadingPage />
 
   return (
@@ -409,7 +421,7 @@ export default function RegionsPage() {
       {/* Add Modal */}
       <Modal isOpen={addOpen} onClose={() => setAddOpen(false)} title="Add Region" size="md">
         <div className="space-y-4">
-          <RegionForm />
+          <RegionForm error={error} form={form} setForm={setForm} generalAreas={generalAreas} rmProfiles={rmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={() => handleSave(false)}>
@@ -422,7 +434,7 @@ export default function RegionsPage() {
       {/* Edit Modal */}
       <Modal isOpen={editOpen} onClose={() => setEditOpen(false)} title={`Edit — ${selected?.name}`} size="md">
         <div className="space-y-4">
-          <RegionForm />
+          <RegionForm error={error} form={form} setForm={setForm} generalAreas={generalAreas} rmProfiles={rmProfiles} />
           <div className="flex justify-end gap-3 pt-2">
             <Button variant="secondary" onClick={() => setEditOpen(false)}>Cancel</Button>
             <Button loading={saving} onClick={() => handleSave(true)}>Save Changes</Button>

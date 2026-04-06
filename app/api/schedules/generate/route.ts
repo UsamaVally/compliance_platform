@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
   // Get all active stores for this organisation with their primary assigned user
   const { data: stores, error: storesError } = await supabase
     .from('stores')
-    .select('id, user_store_assignments(user_id, is_primary)')
+    .select('id, branch_manager_id, user_store_assignments(user_id, is_primary)')
     .eq('organisation_id', schedule.organisation_id)
     .eq('is_active', true)
 
@@ -64,10 +64,15 @@ export async function POST(request: NextRequest) {
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const todayStr = format(today, 'yyyy-MM-dd')
 
-  // Calculate end date range for duplicate check
+  // Start from Monday of the current week so the whole current week gets entries
+  const dayOfWeekToday = getDay(today) // 0=Sun...6=Sat
+  const daysFromMonday = dayOfWeekToday === 0 ? 6 : dayOfWeekToday - 1
+  const weekStart = addDays(today, -daysFromMonday)
+
   const endDate = addDays(today, days - 1)
-  const startDateStr = format(today, 'yyyy-MM-dd')
+  const startDateStr = format(weekStart, 'yyyy-MM-dd')
   const endDateStr = format(endDate, 'yyyy-MM-dd')
 
   // Fetch existing expected submissions in range to avoid duplicates
@@ -94,9 +99,10 @@ export async function POST(request: NextRequest) {
   }[] = []
 
   const daysOfWeek: number[] = schedule.days_of_week ?? []
+  const totalDays = Math.round((endDate.getTime() - weekStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
 
-  for (let i = 0; i < days; i++) {
-    const date = addDays(today, i)
+  for (let i = 0; i < totalDays; i++) {
+    const date = addDays(weekStart, i)
     const dayOfWeek = getDay(date) // 0=Sun, 1=Mon...
     const dateStr = format(date, 'yyyy-MM-dd')
 
@@ -104,22 +110,20 @@ export async function POST(request: NextRequest) {
     if (schedule.frequency === 'weekly') {
       if (!daysOfWeek.includes(dayOfWeek)) continue
     } else if (schedule.frequency === 'monthly') {
-      // Run on day 1 of each month
       if (date.getDate() !== 1) continue
     } else if (schedule.frequency === 'custom') {
       if (daysOfWeek.length > 0 && !daysOfWeek.includes(dayOfWeek)) continue
     }
     // 'daily' — runs every day, no filter
 
+    const isPast = dateStr < todayStr
+
     for (const store of stores ?? []) {
       const storeAssignments = (store.user_store_assignments as { user_id: string; is_primary: boolean }[]) ?? []
-      // Prefer primary assignment, fallback to first
+      // Prefer primary assignment, fallback to branch_manager_id direct assignment
       const primaryAssignment =
         storeAssignments.find(a => a.is_primary) ?? storeAssignments[0] ?? null
-      const assignedUserId = primaryAssignment?.user_id ?? null
-
-      // Skip if no user assigned — only skip if schedule has applicable_role set
-      if (!assignedUserId && schedule.applicable_role) continue
+      const assignedUserId = primaryAssignment?.user_id ?? store.branch_manager_id ?? null
 
       const key = `${store.id}::${dateStr}`
       if (existingSet.has(key)) continue // skip duplicates
@@ -132,7 +136,7 @@ export async function POST(request: NextRequest) {
         due_date: dateStr,
         due_time: schedule.time_due ?? null,
         cutoff_time: schedule.cutoff_time ?? null,
-        status: i === 0 ? 'due' : 'not_due',
+        status: isPast ? 'missed' : dateStr === todayStr ? 'due' : 'not_due',
       })
 
       // Track to avoid duplicates in this batch
