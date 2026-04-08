@@ -160,6 +160,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Patch any existing rows that have null assigned_user_id for stores with a known BM
+  for (const store of stores ?? []) {
+    const storeAssignments = (store.user_store_assignments as { user_id: string; is_primary: boolean }[]) ?? []
+    const primaryAssignment = storeAssignments.find(a => a.is_primary) ?? storeAssignments[0] ?? null
+    const assignedUserId = primaryAssignment?.user_id ?? store.branch_manager_id ?? null
+    if (!assignedUserId) continue
+    await supabase
+      .from('expected_submissions')
+      .update({ assigned_user_id: assignedUserId })
+      .eq('store_id', store.id)
+      .eq('schedule_id', schedule_id)
+      .is('assigned_user_id', null)
+  }
+
   // Audit log
   await supabase.from('audit_logs').insert({
     organisation_id: schedule.organisation_id,
